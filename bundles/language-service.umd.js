@@ -974,7 +974,7 @@ define(['exports', 'typescript', 'fs', 'path', 'reflect-metadata'], function (ex
 	/**
 	 * @stable
 	 */
-	var /** @type {?} */ VERSION = new Version('2.3.0-dfb5ddd');
+	var /** @type {?} */ VERSION = new Version('2.3.0-750a01d');
 
 	/**
 	 * Allows to refer to references which are not yet defined.
@@ -25782,7 +25782,7 @@ define(['exports', 'typescript', 'fs', 'path', 'reflect-metadata'], function (ex
 	/**
 	 * @stable
 	 */
-	var /** @type {?} */ VERSION$1 = new Version('2.3.0-dfb5ddd');
+	var /** @type {?} */ VERSION$1 = new Version('2.3.0-750a01d');
 
 	/**
 	 * @return {?}

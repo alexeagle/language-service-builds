@@ -5,7 +5,7 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import { CompilerConfig, StaticReflector, StaticSymbolCache, componentModuleUrl, createOfflineCompileUrlResolver } from '@angular/compiler';
+import { AotSummaryResolver, CompilerConfig, StaticReflector, StaticSymbolCache, StaticSymbolResolver, componentModuleUrl, createOfflineCompileUrlResolver } from '@angular/compiler';
 import { analyzeNgModules, extractProgramSymbols } from '@angular/compiler/src/aot/compiler';
 import { DirectiveNormalizer } from '@angular/compiler/src/directive_normalizer';
 import { DirectiveResolver } from '@angular/compiler/src/directive_resolver';
@@ -25,6 +25,15 @@ import * as ts from 'typescript';
 import { createLanguageService } from './language_service';
 import { ReflectorHost } from './reflector_host';
 import { BuiltinType } from './types';
+// In TypeScript 2.1 these flags moved
+// These helpers work for both 2.0 and 2.1.
+const isPrivate = ts.ModifierFlags ?
+    ((node) => !!(ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Private)) :
+    ((node) => !!(node.flags & ts.NodeFlags.Private));
+const isReferenceType = ts.ObjectFlags ?
+    ((type) => !!(type.flags & ts.TypeFlags.Object &&
+        type.objectFlags & ts.ObjectFlags.Reference)) :
+    ((type) => !!(type.flags & ts.TypeFlags.Reference));
 /**
  * Create a `LanguageServiceHost`
  */
@@ -95,7 +104,7 @@ export class TypeScriptServiceHost {
                 useJit: false
             });
             const directiveNormalizer = new DirectiveNormalizer(resourceLoader, urlResolver, htmlParser, config);
-            result = this._resolver = new CompileMetadataResolver(moduleResolver, directiveResolver, pipeResolver, new SummaryResolver(), elementSchemaRegistry, directiveNormalizer, this.reflector, (error, type) => this.collectError(error, type && type.filePath));
+            result = this._resolver = new CompileMetadataResolver(moduleResolver, directiveResolver, pipeResolver, new SummaryResolver(), elementSchemaRegistry, directiveNormalizer, this._staticSymbolCache, this.reflector, (error, type) => this.collectError(error, type && type.filePath));
         }
         return result;
     }
@@ -128,8 +137,10 @@ export class TypeScriptServiceHost {
     ensureAnalyzedModules() {
         let analyzedModules = this.analyzedModules;
         if (!analyzedModules) {
-            const programSymbols = extractProgramSymbols(this.reflector, this.program.getSourceFiles().map(sf => sf.fileName), {});
-            analyzedModules = this.analyzedModules = analyzeNgModules(programSymbols, {}, this.resolver);
+            const analyzeHost = { isSourceFile(filePath) { return true; } };
+            const programSymbols = extractProgramSymbols(this.staticSymbolResolver, this.program.getSourceFiles().map(sf => sf.fileName), analyzeHost);
+            analyzedModules = this.analyzedModules =
+                analyzeNgModules(programSymbols, analyzeHost, this.resolver);
         }
         return analyzedModules;
     }
@@ -188,6 +199,7 @@ export class TypeScriptServiceHost {
         if (this.modulesOutOfDate) {
             this.analyzedModules = null;
             this._reflector = null;
+            this._staticSymbolResolver = null;
             this.templateReferences = null;
             this.fileToComponent = null;
             this.ensureAnalyzedModules();
@@ -324,10 +336,22 @@ export class TypeScriptServiceHost {
         }
         errors.push(error);
     }
+    get staticSymbolResolver() {
+        let result = this._staticSymbolResolver;
+        if (!result) {
+            const summaryResolver = new AotSummaryResolver({
+                loadSummary(filePath) { return null; },
+                isSourceFile(sourceFilePath) { return true; },
+                getOutputFileName(sourceFilePath) { return null; }
+            }, this._staticSymbolCache);
+            result = this._staticSymbolResolver = new StaticSymbolResolver(this.reflectorHost, this._staticSymbolCache, summaryResolver, (e, filePath) => this.collectError(e, filePath));
+        }
+        return result;
+    }
     get reflector() {
         let result = this._reflector;
         if (!result) {
-            result = this._reflector = new StaticReflector(this.reflectorHost, this._staticSymbolCache, [], [], (e, filePath) => this.collectError(e, filePath));
+            result = this._reflector = new StaticReflector(this.staticSymbolResolver, [], [], (e, filePath) => this.collectError(e, filePath));
         }
         return result;
     }
@@ -566,7 +590,7 @@ class TypeScriptSymbolQuery {
             const constructorDeclaration = constructor.declarations[0];
             for (const parameter of constructorDeclaration.parameters) {
                 const type = this.checker.getTypeAtLocation(parameter.type);
-                if (type.symbol.name == 'TemplateRef' && type.flags & ts.TypeFlags.Reference) {
+                if (type.symbol.name == 'TemplateRef' && isReferenceType(type)) {
                     const typeReference = type;
                     if (typeReference.typeArguments.length === 1) {
                         return typeReference.typeArguments[0].symbol;
@@ -662,7 +686,7 @@ class SymbolWrapper {
     get container() { return getContainerOf(this.symbol, this.context); }
     get public() {
         // Symbols that are not explicitly made private are public.
-        return !(getDeclarationFlagsFromSymbol(this.symbol) & ts.NodeFlags.Private);
+        return !isSymbolPrivate(this.symbol);
     }
     get callable() { return typeCallable(this.tsType); }
     get definition() { return definitionFromTsSymbol(this.symbol); }
@@ -894,10 +918,8 @@ function getCombinedNodeFlags(node) {
     }
     return flags;
 }
-function getDeclarationFlagsFromSymbol(s) {
-    return s.valueDeclaration ?
-        getCombinedNodeFlags(s.valueDeclaration) :
-        s.flags & ts.SymbolFlags.Prototype ? ts.NodeFlags.Public | ts.NodeFlags.Static : 0;
+function isSymbolPrivate(s) {
+    return s.valueDeclaration && isPrivate(s.valueDeclaration);
 }
 function getBuiltinTypeFromTs(kind, context) {
     let type;

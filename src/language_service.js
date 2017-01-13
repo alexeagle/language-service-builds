@@ -89,7 +89,8 @@ class LanguageServiceImpl {
     getTemplateAst(template, contextFile) {
         let result;
         try {
-            const { metadata } = this.metadataResolver.getNonNormalizedDirectiveMetadata(template.type);
+            const resolvedMetadata = this.metadataResolver.getNonNormalizedDirectiveMetadata(template.type);
+            const metadata = resolvedMetadata && resolvedMetadata.metadata;
             if (metadata) {
                 const rawHtmlParser = new HtmlParser();
                 const htmlParser = new I18NHtmlParser(rawHtmlParser);
@@ -104,8 +105,8 @@ class LanguageServiceImpl {
                     ngModule = findSuitableDefaultModule(analyzedModules);
                 }
                 if (ngModule) {
-                    const directives = ngModule.transitiveModule.directives.map(d => this.host.resolver.getNonNormalizedDirectiveMetadata(d.reference)
-                        .metadata.toSummary());
+                    const resolvedDirectives = ngModule.transitiveModule.directives.map(d => this.host.resolver.getNonNormalizedDirectiveMetadata(d.reference));
+                    const directives = resolvedDirectives.filter(d => d !== null).map(d => d.metadata.toSummary());
                     const pipes = ngModule.transitiveModule.pipes.map(p => this.host.resolver.getOrLoadPipeMetadata(p.reference).toSummary());
                     const schemas = ngModule.schemas;
                     const parseResult = parser.tryParseHtml(htmlResult, metadata, template.source, directives, pipes, schemas, '');
